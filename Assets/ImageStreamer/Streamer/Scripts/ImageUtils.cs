@@ -162,6 +162,75 @@ public class ImageUtils
         System.IO.File.WriteAllBytes(path, png);
     }
 
+    public static void SendArrayAsPNGToSocket(byte[] bytes, GraphicsFormat format, uint width, uint height, Server server, string fileName, string service)
+    {
+        OnFinishBytes onFinishBytes = (png) => 
+        {
+            SocketSendForm form = new SocketSendForm()
+            {
+                name = fileName,
+                fileBytes = png
+            };
+            byte[] data = form.ToBytes();
+            server.SendPNGAsync(data, service);
+        };
+
+        Array2PNG(bytes, format, width, height, onFinishBytes);
+    }
+
+    public static void SendArrayAsPNGToSocketAsync(byte[] bytes, GraphicsFormat format, uint width, uint height, Server server, string fileName, string service)
+    {
+        if (bytes == null)
+        return;
+
+        Thread thread = new Thread(() =>
+        {
+            byte[] png = ImageConversion.EncodeArrayToPNG(bytes, format, width, height);
+
+            SocketSendForm form = new SocketSendForm()
+            {
+                name = fileName,
+                fileBytes = png
+            };
+
+            byte[] data = form.ToBytes();
+            server.SendPNG(data, service);
+        });
+        
+        _threadPool.Add(thread);
+        thread.Start();
+    }
+
+    public static void SaveArray2PNG2DiskAsync(byte[] data, string path)
+    {
+        if (data == null)
+            return;
+
+        Thread thread = new Thread(() =>
+        {
+            SocketSendForm form = new SocketSendForm();
+            form.FromBytes(data);
+            
+            Debug.Log("Saving frame to: " + path);
+            System.IO.File.WriteAllBytes(path + form.name, form.fileBytes);
+        });
+        
+        _threadPool.Add(thread);
+        thread.Start();
+    }
+
+    public static void SaveArray2PNG2Disk(byte[] data, string path)
+    {
+        if (data == null)
+            return;
+
+        SocketSendForm form = new SocketSendForm();
+        form.FromBytes(data);
+
+        Debug.Log("Saving frame to: " + path);
+        System.IO.File.WriteAllBytes(path + form.name, form.fileBytes);
+    }
+
     public static void StopThreads()
     {
         foreach (var thread in _threadPool)

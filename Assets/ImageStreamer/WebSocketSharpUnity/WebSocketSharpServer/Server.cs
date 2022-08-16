@@ -1,4 +1,6 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using WebSocketSharp;
 using WebSocketSharp.Server;
@@ -13,37 +15,41 @@ public class Server : MonoBehaviour
     public int Port { get { return _port; } }
     public string Host { get { return _host; } }
     public string Address { get { return _address; } }
+    public WebSocketServer WsServer { get { return _wsServer; } }
 
-    private void Awake()
+    public void InitServer()
     {
-        InitServer();
-    }
-
-    private void InitServer()
-    {
+        // create a new WebSocket server
         _wsServer = new WebSocketServer(_address);
-        _wsServer.AddWebSocketService<Laputa>("/Laputa");
-        _wsServer.AddWebSocketService<ImageSocketBehaviour>("/Image");
+
+        // add the behaviors to the server
+        AddSocketBehavior();
+
+        // start the server
         _wsServer.Start();
-        Console.ReadKey(true);
-        Debug.Log("Server started at " + _address);
     }
 
     private void OnDestroy()
     {
+        if (_wsServer == null) return;
         _wsServer.Stop();
     }
-}
 
-public class Laputa : WebSocketBehavior
-{
-    protected override void OnMessage(MessageEventArgs e)
+    private void AddSocketBehavior()
     {
-        Debug.Log("Laputa got: " + e.Data);
-        string msg = e.Data == "BALUS"
-                ? "Are you kidding?"
-                : "I'm not available now.";
+        // add the behavior to the server
+        _wsServer.AddWebSocketService<ServerWebSocketBehaviour>("/Image");
+    }
 
-        Send(msg);
+    public void SendPNGAsync(byte[] form, string service)
+    {
+        if (_wsServer == null || form == null) return;
+        _wsServer.WebSocketServices[service].Sessions.BroadcastAsync(form, () => { Debug.Log("Server sent: " + form.Length); });
+    }
+
+    public void SendPNG(byte[] form, string service)
+    {
+        if (_wsServer == null || form == null) return;
+        _wsServer.WebSocketServices[service].Sessions.Broadcast(form);
     }
 }
