@@ -33,10 +33,12 @@ public class RenderTextureStreamer : MonoBehaviour
     [SerializeField] private string _frameSaveFolder = "StreamedFrames1";
 
     [Header("Optimization Config")]
-    [SerializeField] private int _processFrameDelay = 0;
     [SerializeField] private bool _processFramesAsynchronously = true;
     [SerializeField] private bool _iterateCameras = false;
+    [SerializeField] private int _howManyCanProcess = 1;
+    [SerializeField] private int _processFrameDelay = 0;
 
+    private int _howManyProcessed = 0;
     private int _currentCameraIndex = 0;
     private static string _savePath;
     private List<int> _cameraProcessedFrameCount = new List<int>();
@@ -92,6 +94,12 @@ public class RenderTextureStreamer : MonoBehaviour
 
         if (_hasToGetFrameFromClient)
             _client.onMessageCallback += OnSocketGotData;
+        
+        if (_iterateCameras && (_howManyCanProcess < 1 || _howManyCanProcess > _cameras.Count))
+        {
+            Debug.LogWarning("How many cameras can process is not valid, setting it to 1");
+            _howManyCanProcess = 1;
+        }
 
         _onStartupStreamingMode?.Invoke();
     }
@@ -143,7 +151,10 @@ public class RenderTextureStreamer : MonoBehaviour
         }
 
         if (_iterateCameras)
-            _cameras[_currentCameraIndex].gameObject.SetActive(true);
+        {
+            for (int i = 0 ; i < _howManyCanProcess; i++)
+                _cameras[i].gameObject.SetActive(true);
+        }
     }
 
     private void OnEndCameraRendering(ScriptableRenderContext context, Camera camera)
@@ -155,31 +166,35 @@ public class RenderTextureStreamer : MonoBehaviour
         if (cameraIdx == -1)
             return;
             
-        if (_iterateCameras)
-        {
-            if (_currentCameraIndex != cameraIdx)
-                return;
-
-            _cameras[_currentCameraIndex].gameObject.SetActive(false);
-            _currentCameraIndex++;
-            
-            if (_currentCameraIndex >= _cameras.Count)
-                _currentCameraIndex = 0;
-            
-            _cameras[_currentCameraIndex].gameObject.SetActive(true);
-        }
-
+        print("Processing frame of camera: " + camera.name);
         if (_cameraProcessedFrameCount[cameraIdx] < _processFrameDelay)
         {
             _cameraProcessedFrameCount[cameraIdx]++;
             return;
         }
 
+        if (_iterateCameras)
+        {
+            camera.gameObject.SetActive(false);
+            
+            _howManyProcessed++;
+            if (_howManyProcessed >= _howManyCanProcess)
+            {
+                _howManyProcessed = 0;
+                int calc = _currentCameraIndex + _howManyCanProcess;
+
+                for (int i = 0; i < _howManyCanProcess; i++)
+                    _cameras[(calc + i) % _cameras.Count].gameObject.SetActive(true);
+                
+                _currentCameraIndex = calc % _cameras.Count;
+            }
+        }
+
         _cameraProcessedFrameCount[cameraIdx] = 0;
 
         if (_processFramesAsynchronously)
             ImageUtils.RenderTexture2ArrayAsync(camera.targetTexture, TextureFormat.RGBA32, (bytes) => _onFrameProcessedAsync?.Invoke(bytes, camera));
-        else 
+        else
             ImageUtils.RenderTexture2PNG(camera.targetTexture, TextureFormat.RGBA32, (bytes) => _onFrameProcessed?.Invoke(bytes, camera));
 
         _onGotCameraFrame?.Invoke();
