@@ -32,7 +32,7 @@ public class Server : MonoBehaviour
     private void OnDestroy()
     {
         if (_wsServer == null) return;
-        _wsServer.Stop();
+            _wsServer.Stop();
     }
 
     private void AddSocketBehavior()
@@ -44,12 +44,12 @@ public class Server : MonoBehaviour
     public void SendPNGAsync(byte[] form, string service)
     {
         if (_wsServer == null || form == null) return;
-        _wsServer.WebSocketServices[service].Sessions.BroadcastAsync(form, () => { Debug.Log("Server sent: " + form.Length); });
+            _wsServer.WebSocketServices[service].Sessions.BroadcastAsync(form, () => { Debug.Log("Server sent: " + form.Length); });
     }
 
     public void SendPNG(byte[] form, string service)
     {
         if (_wsServer == null || form == null) return;
-        _wsServer.WebSocketServices[service].Sessions.Broadcast(form);
+            _wsServer.WebSocketServices[service].Sessions.Broadcast(form);
     }
 }

@@ -4,6 +4,7 @@ using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.Rendering;
 using UnityEngine.Experimental.Rendering;
+using WebSocketSharp;
 
 public class RenderTextureStreamer : MonoBehaviour
 {
@@ -18,15 +19,18 @@ public class RenderTextureStreamer : MonoBehaviour
     [SerializeField] StreamingMode _streamingMode = StreamingMode.DISK;
     [SerializeField] private bool _processFrames = true;
     [SerializeField] private bool _useApplicationPersistentDataPath = true;
+    [SerializeField] private bool _startStreamerAutomatically= false;
     [SerializeField] private List<Camera> _cameras;
     [SerializeField] private UnityEvent _onGotCameraFrame;
     [SerializeField] private Vector2 _cameraResolution;
 
-    [Header("Disk Streaming Config")]
-    [SerializeField] private string _frameSaveFolder = "StreamedFrames1";
-
-    [Header("Socket Streaming Config")]
+    [Header("Socket Config")]
+    [SerializeField] private bool _hasToGetFrameFromClient = false;
+    [SerializeField] private Client _client;
     [SerializeField] private Server _server;
+    
+    [Header("Disk Config")]
+    [SerializeField] private string _frameSaveFolder = "StreamedFrames1";
 
     [Header("Optimization Config")]
     [SerializeField] private int _processFrameDelay = 0;
@@ -50,27 +54,31 @@ public class RenderTextureStreamer : MonoBehaviour
 
     private void Awake()
     {
-        Init();
+        if (_startStreamerAutomatically)
+            Init();
+    }
+
+    void Start()
+    {
+        if (_startStreamerAutomatically && _hasToGetFrameFromClient)
+            _client.InitClient();
     }
 
     private void Init()
     {
-        if (_useApplicationPersistentDataPath)
-            _savePath = System.IO.Path.Combine(Application.persistentDataPath, _frameSaveFolder);
-        else
-            _savePath = _frameSaveFolder;
-
         switch (_streamingMode)
         {
             case StreamingMode.DISK:
-                _onStartupStreamingMode += SetupCameras;
                 _onStartupStreamingMode += CreateFrameFolder;
+                _onStartupStreamingMode += SetupCameras;
+                _onStartupStreamingMode += CreateCamerasFolder;
                 _onFrameProcessedAsync += DiskFrameProcessedAsync;
                 _onFrameProcessed += DiskFrameProcessed;
                 RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
                 break;
             case StreamingMode.SOCKET:
-            _onStartupStreamingMode += SetupCameras;
+                _onStartupStreamingMode += CreateFrameFolder;
+                _onStartupStreamingMode += SetupCameras;
                 _onStartupStreamingMode += _server.InitServer;
                 _onFrameProcessedAsync += SocketFrameProcessedAsync;
                 _onFrameProcessed += SocketFrameProcessed;
@@ -82,22 +90,33 @@ public class RenderTextureStreamer : MonoBehaviour
                 break;
         }
 
+        if (_hasToGetFrameFromClient)
+            _client.onMessageCallback += OnSocketGotData;
+
         _onStartupStreamingMode?.Invoke();
     }
 
     private void CreateFrameFolder()
     {
+        if (_useApplicationPersistentDataPath)
+            _savePath = System.IO.Path.Combine(Application.persistentDataPath, _frameSaveFolder);
+        else
+            _savePath = System.IO.Path.Combine(System.Environment.GetEnvironmentVariable("USERPROFILE"), _frameSaveFolder);
+
         if (!System.IO.Directory.Exists(_savePath))
             System.IO.Directory.CreateDirectory(_savePath);
         
+        Debug.Log("Created folder: " + _savePath);
+    }
+
+    private void CreateCamerasFolder()
+    {
         foreach (Camera camera in _cameras)
         {
             string cameraPath = System.IO.Path.Combine(_savePath, camera.name);
             if (!System.IO.Directory.Exists(cameraPath))
                 System.IO.Directory.CreateDirectory(cameraPath);
         }
-
-        Debug.Log("Created folder: " + _savePath);
     }
 
     private void DeleteFrameFolder()
@@ -181,14 +200,14 @@ public class RenderTextureStreamer : MonoBehaviour
 
     private void SocketFrameProcessedAsync(byte[] png, Camera camera)
     {
-        string fileName = camera.name + System.DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss-fff") + ".png";
+        string fileName = camera.name + "/" + System.DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss-fff") + ".png";
         RenderTexture rt = camera.targetTexture;
         ImageUtils.SendArrayAsPNGToSocketAsync(png, rt.graphicsFormat, (uint)rt.width, (uint)rt.height, _server, fileName, "/Image");
     }
 
     private void SocketFrameProcessed(byte[] png, Camera camera)
     {
-        string fileName = camera.name + System.DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss-fff") + ".png";
+        string fileName = camera.name + "/" + System.DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss-fff") + ".png";
         SocketSendForm form = new SocketSendForm()
         {
             name = fileName,
@@ -197,6 +216,14 @@ public class RenderTextureStreamer : MonoBehaviour
 
         byte[] data = form.ToBytes();
         _server.SendPNG(data, "/Image");
+    }
+
+    public void OnSocketGotData(object sender, MessageEventArgs e)
+    {
+        if (_savePath == null)
+            CreateFrameFolder();
+
+        ImageUtils.SaveSocketFormAsPNG2DiskAsync(e.RawData, _savePath);
     }
 
     private string GetFramePath(string cameraName)
@@ -211,7 +238,7 @@ public class RenderTextureStreamer : MonoBehaviour
 
     private void OnDestroy()
     {
-        ImageUtils.StopThreads();
+        ImageUtils.StopAllThreads();
         RenderPipelineManager.endCameraRendering -= OnEndCameraRendering;
     }
 }

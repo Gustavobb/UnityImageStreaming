@@ -122,14 +122,13 @@ public class ImageUtils
         if (bytes == null)
             return;
 
-        Thread thread = new Thread(() => 
+        System.Threading.ParameterizedThreadStart threadFunction = obj =>
         {
             byte[] png = ImageConversion.EncodeArrayToPNG(bytes, format, width, height);
             System.IO.File.WriteAllBytes(filePath, png);
-        });
-        
-        _threadPool.Add(thread);
-        thread.Start();
+        };
+
+        HandleThreadPool(threadFunction);
     }
 
     public static void SaveArrayAsPNGToDisk(byte[] bytes, GraphicsFormat format, uint width, uint height, string filePath)
@@ -141,16 +140,15 @@ public class ImageUtils
     public static void SavePNG2DiskAsync(byte[] png, string path)
     {
         if (png == null)
-        return;
+            return;
 
-        Thread thread = new Thread(() =>
+        System.Threading.ParameterizedThreadStart threadFunction = obj =>
         {
             Debug.Log("Saving frame to: " + path);
             System.IO.File.WriteAllBytes(path, png);
-        });
+        };
         
-        _threadPool.Add(thread);
-        thread.Start();
+        HandleThreadPool(threadFunction);
     }
 
     public static void SavePNG2Disk(byte[] png, string path)
@@ -181,9 +179,9 @@ public class ImageUtils
     public static void SendArrayAsPNGToSocketAsync(byte[] bytes, GraphicsFormat format, uint width, uint height, Server server, string fileName, string service)
     {
         if (bytes == null)
-        return;
+            return;
 
-        Thread thread = new Thread(() =>
+        System.Threading.ParameterizedThreadStart threadFunction = obj =>
         {
             byte[] png = ImageConversion.EncodeArrayToPNG(bytes, format, width, height);
 
@@ -195,31 +193,30 @@ public class ImageUtils
 
             byte[] data = form.ToBytes();
             server.SendPNG(data, service);
-        });
+        };
         
-        _threadPool.Add(thread);
-        thread.Start();
+        HandleThreadPool(threadFunction);
     }
 
-    public static void SaveArray2PNG2DiskAsync(byte[] data, string path)
+    public static void SaveSocketFormAsPNG2DiskAsync(byte[] data, string path)
     {
         if (data == null)
             return;
 
-        Thread thread = new Thread(() =>
+        System.Threading.ParameterizedThreadStart threadFunction = obj =>
         {
             SocketSendForm form = new SocketSendForm();
             form.FromBytes(data);
             
-            Debug.Log("Saving frame to: " + path);
-            System.IO.File.WriteAllBytes(path + form.name, form.fileBytes);
-        });
+            string filePath = CreateFolderAndReturnPath(form.name, path);
+            System.IO.File.WriteAllBytes(filePath, form.fileBytes);
+            Debug.Log("Saving frame to: " + filePath);
+        };
         
-        _threadPool.Add(thread);
-        thread.Start();
+        HandleThreadPool(threadFunction);
     }
 
-    public static void SaveArray2PNG2Disk(byte[] data, string path)
+    public static void SaveSocketFormAsPNG2Disk(byte[] data, string path)
     {
         if (data == null)
             return;
@@ -227,11 +224,41 @@ public class ImageUtils
         SocketSendForm form = new SocketSendForm();
         form.FromBytes(data);
 
+        string filePath = CreateFolderAndReturnPath(form.name, path);
+        System.IO.File.WriteAllBytes(filePath, form.fileBytes);
         Debug.Log("Saving frame to: " + path);
-        System.IO.File.WriteAllBytes(path + form.name, form.fileBytes);
     }
 
-    public static void StopThreads()
+    private static string CreateFolderAndReturnPath(string fileName, string path)
+    {
+        string[] paths = fileName.Split('/');
+        string folder = System.IO.Path.Combine(path, paths[0]);
+
+        if (!System.IO.Directory.Exists(folder))
+            System.IO.Directory.CreateDirectory(folder);
+        
+        return System.IO.Path.Combine(folder, paths[1]);
+    }
+
+    private static void HandleThreadPool(System.Threading.ParameterizedThreadStart threadFunction)
+    {
+        for (int i = 0; i < _threadPool.Count; i++)
+        {
+            if (!_threadPool[i].IsAlive)
+            {
+                _threadPool[i].Abort();
+                _threadPool[i] = new Thread(threadFunction);
+                _threadPool[i].Start();
+                return;
+            }
+        }
+
+        Thread thread = new Thread(threadFunction);
+        _threadPool.Add(thread);
+        thread.Start();
+    }
+
+    public static void StopAllThreads()
     {
         foreach (var thread in _threadPool)
             thread.Abort();
