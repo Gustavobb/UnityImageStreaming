@@ -906,9 +906,16 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _streamingMode: 1
-  _processFrames: 0
+  _runStreamer: 0
   _useApplicationPersistentDataPath: 0
-  _startStreamerAutomatically: 1
+  _initStreamerAutomatically: 1
+  _hasToGetStreamFromClient: 1
+  _service: Image
+  _client: {fileID: 1953010353}
+  _server: {fileID: 1644903524}
+  _streamSaveFolder: Downloads\Streamed
+  _processStreamAsynchronously: 1
+  _processStreamDelay: 0
   _cameras:
   - {fileID: 1309106337}
   - {fileID: 1153277025}
@@ -922,15 +929,8 @@ MonoBehaviour:
     m_PersistentCalls:
       m_Calls: []
   _cameraResolution: {x: 320, y: 240}
-  _hasToGetFrameFromClient: 1
-  _service: Image
-  _client: {fileID: 1953010353}
-  _server: {fileID: 1644903524}
-  _frameSaveFolder: Downloads\Streamer
-  _processFramesAsynchronously: 1
   _iterateCameras: 1
   _howManyCanProcess: 5
-  _processFrameDelay: 0
 --- !u!1 &1309106333
 GameObject:
   m_ObjectHideFlags: 0

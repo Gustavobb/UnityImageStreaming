@@ -8,119 +8,48 @@ using WebSocketSharp;
 using Unity.Collections;
 using WebSocketSharp.Server;
 
-public class RenderTextureStreamer : MonoBehaviour
+public class RenderTextureStreamer : DataStreamer
 {
-    public enum StreamingMode
-    {
-        DISK, 
-        SOCKET,
-        NONE
-    }
-
-    [Header("Streaming Config")]
-    [SerializeField] StreamingMode _streamingMode = StreamingMode.DISK;
-    [SerializeField] private bool _processFrames = true;
-    [SerializeField] private bool _useApplicationPersistentDataPath = true;
-    [SerializeField] private bool _startStreamerAutomatically= false;
+    [Header("Camera Config")]
     [SerializeField] private List<Camera> _cameras;
     [SerializeField] private UnityEvent _onGotCameraFrame;
     [SerializeField] private Vector2 _cameraResolution;
 
-    [Header("Socket Config")]
-    [SerializeField] private bool _hasToGetFrameFromClient = false;
-    [SerializeField] private string _service = "Image";
-    [SerializeField] private Client _client;
-    [SerializeField] private Server _server;
-    
-    [Header("Disk Config")]
-    [SerializeField] private string _frameSaveFolder = "StreamedFrames1";
-
-    [Header("Optimization Config")]
-    [SerializeField] private bool _processFramesAsynchronously = true;
+    [Header("Camera Optimization Config")]
     [SerializeField] private bool _iterateCameras = false;
     [SerializeField] private int _howManyCanProcess = 1;
-    [SerializeField] private int _processFrameDelay = 0;
 
     private int _howManyProcessed = 0;
     private int _currentCameraIndex = 0;
-    private static string _savePath;
     private List<int> _cameraProcessedFrameCount = new List<int>();
 
-    private delegate void OnStartupStreamingMode();
-    private OnStartupStreamingMode _onStartupStreamingMode;
+    protected delegate void OnStreamProcessed<T>(T data, Camera camera);
+    protected delegate void OnStreamProcessedAsync<T>(T data, Camera camera);
+
+    private OnStreamProcessed<byte[]> _onStreamProcessed;
+    private OnStreamProcessedAsync<byte[]> _onStreamProcessedAsyncByte;
+    private OnStreamProcessedAsync<NativeArray<byte>> _onStreamProcessedAsyncNativeArray;
 
     private delegate void OnFrameProcessed(byte[] data, Camera camera);
     private OnFrameProcessed _onFrameProcessed;
 
-    private delegate void OnFrameProcessedAsync<T>(T data, Camera camera);
-    private OnFrameProcessedAsync<byte[]> _onFrameProcessedAsyncByte;
-    private OnFrameProcessedAsync<NativeArray<byte>> _onFrameProcessedAsyncNativeArray;
-    public string Service { get { return "/" + _service; } }
-    public WebSocketSessionManager SessionManager { get { return _server.WsServer.WebSocketServices[Service].Sessions; } }
-
-    public static string SavePath { get => _savePath + "/"; }
-
-    private void Awake()
+    protected override void SetupSocketMode()
     {
-        if (_startStreamerAutomatically)
-            Init();
+        base.SetupSocketMode();
+        _onStartupStreamingMode += SetupCameras;
+        _onStreamProcessedAsyncNativeArray += SocketStreamProcessedAsync;
+        _onStreamProcessed += SocketStreamProcessed;
+        RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
     }
 
-    void Start()
+    protected override void SetupDiskMode()
     {
-        if (_startStreamerAutomatically && _hasToGetFrameFromClient)
-            _client.InitClient();
-    }
-
-    private void Init()
-    {
-        switch (_streamingMode)
-        {
-            case StreamingMode.DISK:
-                _onStartupStreamingMode += CreateFrameFolder;
-                _onStartupStreamingMode += SetupCameras;
-                _onStartupStreamingMode += CreateCamerasFolder;
-                _onFrameProcessedAsyncNativeArray += DiskFrameProcessedAsync;
-                _onFrameProcessed += DiskFrameProcessed;
-                RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
-                break;
-            case StreamingMode.SOCKET:
-                _onStartupStreamingMode += CreateFrameFolder;
-                _onStartupStreamingMode += SetupCameras;
-                _onStartupStreamingMode += _server.InitServer;
-                _onFrameProcessedAsyncNativeArray += SocketFrameProcessedAsync;
-                _onFrameProcessed += SocketFrameProcessed;
-                RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
-                break;
-            case StreamingMode.NONE:
-                break;
-            default:
-                break;
-        }
-
-        if (_hasToGetFrameFromClient)
-            _client.onMessageCallback += OnSocketGotData;
-        
-        if (_iterateCameras && (_howManyCanProcess < 1 || _howManyCanProcess > _cameras.Count))
-        {
-            Debug.LogWarning("How many cameras can process is not valid, setting it to 1");
-            _howManyCanProcess = 1;
-        }
-
-        _onStartupStreamingMode?.Invoke();
-    }
-
-    private void CreateFrameFolder()
-    {
-        if (_useApplicationPersistentDataPath)
-            _savePath = System.IO.Path.Combine(Application.persistentDataPath, _frameSaveFolder);
-        else
-            _savePath = System.IO.Path.Combine(System.Environment.GetEnvironmentVariable("USERPROFILE"), _frameSaveFolder);
-
-        if (!System.IO.Directory.Exists(_savePath))
-            System.IO.Directory.CreateDirectory(_savePath);
-        
-        Debug.Log("Created folder: " + _savePath);
+        base.SetupDiskMode();
+        _onStartupStreamingMode += SetupCameras;
+        _onStartupStreamingMode += CreateCamerasFolder;
+        _onStreamProcessedAsyncNativeArray += DiskStreamProcessedAsync;
+        _onStreamProcessed += DiskStreamProcessed;
+        RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
     }
 
     private void CreateCamerasFolder()
@@ -131,12 +60,6 @@ public class RenderTextureStreamer : MonoBehaviour
             if (!System.IO.Directory.Exists(cameraPath))
                 System.IO.Directory.CreateDirectory(cameraPath);
         }
-    }
-
-    private void DeleteFrameFolder()
-    {
-        if (System.IO.Directory.Exists(_savePath))
-            System.IO.Directory.Delete(_savePath, true);
     }
 
     private void SetupCameras()
@@ -158,21 +81,28 @@ public class RenderTextureStreamer : MonoBehaviour
 
         if (_iterateCameras)
         {
+            if (_howManyCanProcess < 1 || _howManyCanProcess > _cameras.Count)
+            {
+                Debug.LogWarning("How many cameras can process is not valid, setting it to 1");
+                _howManyCanProcess = 1;
+            }
+
             for (int i = 0 ; i < _howManyCanProcess; i++)
                 _cameras[i].gameObject.SetActive(true);
         }
     }
 
-    private void OnEndCameraRendering(ScriptableRenderContext context, Camera camera)
+    protected override void Stream<T>(T obj)
     {
-        if (!_processFrames)
+        Camera camera = obj as Camera;
+        if (!_runStreamer)
             return;
-
+        
         int cameraIdx = _cameras.IndexOf(camera);
         if (cameraIdx == -1)
             return;
         
-        if (_cameraProcessedFrameCount[cameraIdx] < _processFrameDelay)
+        if (_cameraProcessedFrameCount[cameraIdx] < _processStreamDelay)
         {
             _cameraProcessedFrameCount[cameraIdx]++;
             return;
@@ -197,35 +127,33 @@ public class RenderTextureStreamer : MonoBehaviour
 
         _cameraProcessedFrameCount[cameraIdx] = 0;
 
-        if (_processFramesAsynchronously)
-            ImageUtils.RenderTexture2NativeArrayAsync(camera.targetTexture, TextureFormat.RGBA32, (bytes) => _onFrameProcessedAsyncNativeArray?.Invoke(bytes, camera));
+        if (_processStreamAsynchronously)
+            ImageUtils.RenderTexture2NativeArrayAsync(camera.targetTexture, TextureFormat.RGBA32, (bytes) => _onStreamProcessedAsyncNativeArray?.Invoke(bytes, camera));
         else
-            ImageUtils.RenderTexture2PNG(camera.targetTexture, TextureFormat.RGBA32, (bytes) => _onFrameProcessed?.Invoke(bytes, camera));
+            ImageUtils.RenderTexture2PNG(camera.targetTexture, TextureFormat.RGBA32, (bytes) => _onStreamProcessed?.Invoke(bytes, camera));
 
         _onGotCameraFrame?.Invoke();
     }
 
-    private void DiskFrameProcessedAsync(NativeArray<byte> png, Camera camera)
+    private void OnEndCameraRendering(ScriptableRenderContext context, Camera camera)
+    {
+        Stream<Camera>(camera);
+    }
+
+    protected void DiskStreamProcessed(byte[] png, Camera camera)
+    {
+        string path = GetFramePath(camera.name);
+        ImageUtils.SavePNG2Disk(png, path);
+    }
+
+    protected void DiskStreamProcessedAsync(NativeArray<byte> png, Camera camera)
     {
         string path = GetFramePath(camera.name);
         RenderTexture rt = camera.targetTexture;
         ImageUtils.SaveNativeByteArrayAsPNGToDiskAsync(png, rt.graphicsFormat, (uint)rt.width, (uint)rt.height, path);
     }
 
-    private void DiskFrameProcessed(byte[] png, Camera camera)
-    {
-        string path = GetFramePath(camera.name);
-        ImageUtils.SavePNG2Disk(png, path);
-    }
-
-    private void SocketFrameProcessedAsync(NativeArray<byte> png, Camera camera)
-    {
-        string fileName = camera.name + "/" + System.DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss-fff") + ".png";
-        RenderTexture rt = camera.targetTexture;
-        ImageUtils.SendNativeByteArrayAsPNGToSocketAsync(png, rt.graphicsFormat, (uint)rt.width, (uint)rt.height, SessionManager, fileName);
-    }
-
-    private void SocketFrameProcessed(byte[] png, Camera camera)
+    protected void SocketStreamProcessed(byte[] png, Camera camera)
     {
         string fileName = camera.name + "/" + System.DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss-fff") + ".png";
         SocketSendForm form = new SocketSendForm()
@@ -238,11 +166,16 @@ public class RenderTextureStreamer : MonoBehaviour
         SessionManager.Broadcast(data);
     }
 
-    public void OnSocketGotData(object sender, MessageEventArgs e)
+    protected void SocketStreamProcessedAsync(NativeArray<byte> png, Camera camera)
     {
-        if (_savePath == null)
-            CreateFrameFolder();
+        string fileName = camera.name + "/" + System.DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss-fff") + ".png";
+        RenderTexture rt = camera.targetTexture;
+        ImageUtils.SendNativeByteArrayAsPNGToSocketAsync(png, rt.graphicsFormat, (uint)rt.width, (uint)rt.height, SessionManager, fileName);
+    }
 
+    public override void OnSocketGotData(object sender, MessageEventArgs e)
+    {
+        base.OnSocketGotData(sender, e);
         ImageUtils.SaveSocketFormAsPNG2DiskAsync(e.RawData, _savePath);
     }
 
@@ -256,34 +189,9 @@ public class RenderTextureStreamer : MonoBehaviour
         return framePath;
     }
 
-    private void OnDestroy()
+    protected override void OnDestroy()
     {
         ImageUtils.StopAllThreads();
         RenderPipelineManager.endCameraRendering -= OnEndCameraRendering;
-    }
-}
-
-[System.Serializable]
-public class SocketSendForm
-{
-    public string name;
-    public byte[] fileBytes;
-
-    public byte[] ToBytes()
-    {
-        byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(name);
-        byte[] data = new byte[nameBytes.Length + fileBytes.Length + sizeof(int)];
-        System.Buffer.BlockCopy(nameBytes, 0, data, 0, nameBytes.Length);
-        System.Buffer.BlockCopy(fileBytes, 0, data, nameBytes.Length, fileBytes.Length);
-        System.Buffer.BlockCopy(System.BitConverter.GetBytes(nameBytes.Length), 0, data, nameBytes.Length + fileBytes.Length, sizeof(int));
-        return data;
-    }
-
-    public void FromBytes(byte[] data)
-    {
-        int nameLength = System.BitConverter.ToInt32(data, data.Length - sizeof(int));
-        name = System.Text.Encoding.UTF8.GetString(data, 0, nameLength);
-        fileBytes = new byte[data.Length - nameLength - sizeof(int)];
-        System.Buffer.BlockCopy(data, nameLength, fileBytes, 0, fileBytes.Length);
     }
 }

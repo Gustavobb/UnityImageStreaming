@@ -13,7 +13,7 @@ public class ImageUtils
     public delegate void OnFinishNativeBytes(NativeArray<byte> bytes);
     public delegate void OnFinishTexture(Texture2D texture);
     public delegate void OnFinishRenderTexture(RenderTexture texture);
-    private static List<Thread> _threadPool = new List<Thread>();
+    private static List<ThreadData> _threadPool = new List<ThreadData>();
 
     public static void RenderTexture2Texture2D(RenderTexture renderTexture, TextureFormat format, OnFinishTexture onFinishTexture)
     {
@@ -153,9 +153,16 @@ public class ImageUtils
 
         System.Threading.ParameterizedThreadStart threadFunction = obj =>
         {
-            byte[] png = new byte[bytes.Length];
-            bytes.CopyTo(png);
+            byte[] png;
+            if (_threadPool[(int) obj].bytes == null)
+            {
+                png = new byte[bytes.Length];
+                _threadPool[(int) obj].bytes = png;
+            }
+            else
+                png = _threadPool[(int) obj].bytes;
 
+            bytes.CopyTo(png);
             png = ImageConversion.EncodeArrayToPNG(png, format, width, height);
             System.IO.File.WriteAllBytes(filePath, png);
         };
@@ -235,9 +242,14 @@ public class ImageUtils
 
         System.Threading.ParameterizedThreadStart threadFunction = obj =>
         {
-            // bottleneck
-            byte[] png = new byte[bytes.Length];
-            //
+            byte[] png;
+            if (_threadPool[(int) obj].bytes == null)
+            {
+                png = new byte[bytes.Length];
+                _threadPool[(int) obj].bytes = png;
+            }
+            else
+                png = _threadPool[(int) obj].bytes;
 
             bytes.CopyTo(png);
             png = ImageConversion.EncodeArrayToPNG(png, format, width, height);
@@ -251,7 +263,7 @@ public class ImageUtils
             byte[] data = form.ToBytes();
             server.Broadcast(data);
         };
-        
+
         HandleThreadPool(threadFunction);
     }
 
@@ -301,25 +313,36 @@ public class ImageUtils
 
         for (int i = 0; i < _threadPool.Count; i++)
         {
-            if (!_threadPool[i].IsAlive)
+            if (!_threadPool[i].thread.IsAlive)
             {
-                thread = _threadPool[i];
+                thread = _threadPool[i].thread;
                 thread.Abort();
                 thread = new Thread(threadFunction);
-                thread.Start();
-                _threadPool[i] = thread;
+                thread.Start(i);
+                _threadPool[i].thread = thread;
                 return;
             }
         }
 
         thread = new Thread(threadFunction);
-        _threadPool.Add(thread);
-        thread.Start();
+        ThreadData newThreadData = new ThreadData()
+        {
+            thread = thread,
+            bytes = null
+        };
+        _threadPool.Add(newThreadData);
+        thread.Start(_threadPool.Count - 1);
     }
 
     public static void StopAllThreads()
     {
-        foreach (var thread in _threadPool)
-            thread.Abort();
+        foreach (ThreadData obj in _threadPool)
+            obj.thread.Abort();
     }
+}
+
+class ThreadData
+{
+    public Thread thread;
+    public byte[] bytes;
 }
