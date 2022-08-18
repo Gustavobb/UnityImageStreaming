@@ -16,7 +16,7 @@ public class Server : MonoBehaviour
     public string Host { get { return _host; } }
     public string Address { get { return _address; } }
     public WebSocketServer WsServer { get { return _wsServer; } }
-
+    
     public void InitServer()
     {
         // create a new WebSocket server
@@ -32,24 +32,12 @@ public class Server : MonoBehaviour
     private void OnDestroy()
     {
         if (_wsServer == null) return;
-            _wsServer.Stop();
+        _wsServer.Stop();
     }
 
     private void AddSocketBehavior()
     {
         // add the behavior to the server
         _wsServer.AddWebSocketService<ServerWebSocketBehaviour>("/Image");
-    }
-
-    public void SendPNGAsync(byte[] form, string service)
-    {
-        if (_wsServer == null || form == null) return;
-            _wsServer.WebSocketServices[service].Sessions.BroadcastAsync(form, () => { Debug.Log("Server sent: " + form.Length); });
-    }
-
-    public void SendPNG(byte[] form, string service)
-    {
-        if (_wsServer == null || form == null) return;
-            _wsServer.WebSocketServices[service].Sessions.Broadcast(form);
     }
 }

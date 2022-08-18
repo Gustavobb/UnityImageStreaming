@@ -5,6 +5,8 @@ using UnityEngine.Events;
 using UnityEngine.Rendering;
 using UnityEngine.Experimental.Rendering;
 using WebSocketSharp;
+using Unity.Collections;
+using WebSocketSharp.Server;
 
 public class RenderTextureStreamer : MonoBehaviour
 {
@@ -26,6 +28,7 @@ public class RenderTextureStreamer : MonoBehaviour
 
     [Header("Socket Config")]
     [SerializeField] private bool _hasToGetFrameFromClient = false;
+    [SerializeField] private string _service = "Image";
     [SerializeField] private Client _client;
     [SerializeField] private Server _server;
     
@@ -49,8 +52,11 @@ public class RenderTextureStreamer : MonoBehaviour
     private delegate void OnFrameProcessed(byte[] data, Camera camera);
     private OnFrameProcessed _onFrameProcessed;
 
-    private delegate void OnFrameProcessedAsync(byte[] data, Camera camera);
-    private OnFrameProcessedAsync _onFrameProcessedAsync;
+    private delegate void OnFrameProcessedAsync<T>(T data, Camera camera);
+    private OnFrameProcessedAsync<byte[]> _onFrameProcessedAsyncByte;
+    private OnFrameProcessedAsync<NativeArray<byte>> _onFrameProcessedAsyncNativeArray;
+    public string Service { get { return "/" + _service; } }
+    public WebSocketSessionManager SessionManager { get { return _server.WsServer.WebSocketServices[Service].Sessions; } }
 
     public static string SavePath { get => _savePath + "/"; }
 
@@ -74,7 +80,7 @@ public class RenderTextureStreamer : MonoBehaviour
                 _onStartupStreamingMode += CreateFrameFolder;
                 _onStartupStreamingMode += SetupCameras;
                 _onStartupStreamingMode += CreateCamerasFolder;
-                _onFrameProcessedAsync += DiskFrameProcessedAsync;
+                _onFrameProcessedAsyncNativeArray += DiskFrameProcessedAsync;
                 _onFrameProcessed += DiskFrameProcessed;
                 RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
                 break;
@@ -82,7 +88,7 @@ public class RenderTextureStreamer : MonoBehaviour
                 _onStartupStreamingMode += CreateFrameFolder;
                 _onStartupStreamingMode += SetupCameras;
                 _onStartupStreamingMode += _server.InitServer;
-                _onFrameProcessedAsync += SocketFrameProcessedAsync;
+                _onFrameProcessedAsyncNativeArray += SocketFrameProcessedAsync;
                 _onFrameProcessed += SocketFrameProcessed;
                 RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
                 break;
@@ -165,8 +171,7 @@ public class RenderTextureStreamer : MonoBehaviour
         int cameraIdx = _cameras.IndexOf(camera);
         if (cameraIdx == -1)
             return;
-            
-        print("Processing frame of camera: " + camera.name);
+        
         if (_cameraProcessedFrameCount[cameraIdx] < _processFrameDelay)
         {
             _cameraProcessedFrameCount[cameraIdx]++;
@@ -193,18 +198,18 @@ public class RenderTextureStreamer : MonoBehaviour
         _cameraProcessedFrameCount[cameraIdx] = 0;
 
         if (_processFramesAsynchronously)
-            ImageUtils.RenderTexture2ArrayAsync(camera.targetTexture, TextureFormat.RGBA32, (bytes) => _onFrameProcessedAsync?.Invoke(bytes, camera));
+            ImageUtils.RenderTexture2NativeArrayAsync(camera.targetTexture, TextureFormat.RGBA32, (bytes) => _onFrameProcessedAsyncNativeArray?.Invoke(bytes, camera));
         else
             ImageUtils.RenderTexture2PNG(camera.targetTexture, TextureFormat.RGBA32, (bytes) => _onFrameProcessed?.Invoke(bytes, camera));
 
         _onGotCameraFrame?.Invoke();
     }
 
-    private void DiskFrameProcessedAsync(byte[] png, Camera camera)
+    private void DiskFrameProcessedAsync(NativeArray<byte> png, Camera camera)
     {
         string path = GetFramePath(camera.name);
         RenderTexture rt = camera.targetTexture;
-        ImageUtils.SaveArrayAsPNGToDiskAsync(png, rt.graphicsFormat, (uint)rt.width, (uint)rt.height, path);
+        ImageUtils.SaveNativeByteArrayAsPNGToDiskAsync(png, rt.graphicsFormat, (uint)rt.width, (uint)rt.height, path);
     }
 
     private void DiskFrameProcessed(byte[] png, Camera camera)
@@ -213,11 +218,11 @@ public class RenderTextureStreamer : MonoBehaviour
         ImageUtils.SavePNG2Disk(png, path);
     }
 
-    private void SocketFrameProcessedAsync(byte[] png, Camera camera)
+    private void SocketFrameProcessedAsync(NativeArray<byte> png, Camera camera)
     {
         string fileName = camera.name + "/" + System.DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss-fff") + ".png";
         RenderTexture rt = camera.targetTexture;
-        ImageUtils.SendArrayAsPNGToSocketAsync(png, rt.graphicsFormat, (uint)rt.width, (uint)rt.height, _server, fileName, "/Image");
+        ImageUtils.SendNativeByteArrayAsPNGToSocketAsync(png, rt.graphicsFormat, (uint)rt.width, (uint)rt.height, SessionManager, fileName);
     }
 
     private void SocketFrameProcessed(byte[] png, Camera camera)
@@ -230,7 +235,7 @@ public class RenderTextureStreamer : MonoBehaviour
         };
 
         byte[] data = form.ToBytes();
-        _server.SendPNG(data, "/Image");
+        SessionManager.Broadcast(data);
     }
 
     public void OnSocketGotData(object sender, MessageEventArgs e)

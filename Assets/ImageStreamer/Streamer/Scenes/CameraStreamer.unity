@@ -923,12 +923,13 @@ MonoBehaviour:
       m_Calls: []
   _cameraResolution: {x: 480, y: 360}
   _hasToGetFrameFromClient: 1
+  _service: Image
   _client: {fileID: 1953010353}
   _server: {fileID: 1644903524}
   _frameSaveFolder: Downloads\Streamer
   _processFramesAsynchronously: 1
-  _iterateCameras: 0
-  _howManyCanProcess: 2
+  _iterateCameras: 1
+  _howManyCanProcess: 5
   _processFrameDelay: 0
 --- !u!1 &1309106333
 GameObject:

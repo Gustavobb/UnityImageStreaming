@@ -1,13 +1,16 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using Unity.Collections;
 using UnityEngine.Rendering;
 using UnityEngine.Experimental.Rendering;
 using System.Threading;
+using WebSocketSharp.Server;
 
 public class ImageUtils
 {
     public delegate void OnFinishBytes(byte[] bytes);
+    public delegate void OnFinishNativeBytes(NativeArray<byte> bytes);
     public delegate void OnFinishTexture(Texture2D texture);
     public delegate void OnFinishRenderTexture(RenderTexture texture);
     private static List<Thread> _threadPool = new List<Thread>();
@@ -65,6 +68,18 @@ public class ImageUtils
         });
     }
 
+    public static void RenderTexture2NativeArrayAsync(RenderTexture renderTexture, TextureFormat format, OnFinishNativeBytes onFinishNativeBytes)
+    {
+        AsyncGPUReadback.Request(renderTexture, 0, format, req =>
+        {
+            if (!AssertGPUReadback(req, renderTexture))
+                return;
+
+            NativeArray<byte> nativeBytes = req.GetData<byte>();
+            onFinishNativeBytes?.Invoke(nativeBytes);
+        });
+    }
+
     public static void RenderTexture2ArrayAsync(RenderTexture renderTexture, TextureFormat format, OnFinishBytes onFinishBytes)
     {
         AsyncGPUReadback.Request(renderTexture, 0, format, req =>
@@ -72,7 +87,7 @@ public class ImageUtils
             if (!AssertGPUReadback(req, renderTexture))
                 return;
 
-            byte [] bytes = req.GetData<byte>().ToArray();
+            byte[] bytes = req.GetData<byte>().ToArray();
             onFinishBytes?.Invoke(bytes);
         });
     }
@@ -131,6 +146,23 @@ public class ImageUtils
         HandleThreadPool(threadFunction);
     }
 
+    public static void SaveNativeByteArrayAsPNGToDiskAsync(NativeArray<byte> bytes, GraphicsFormat format, uint width, uint height, string filePath)
+    {
+       if (bytes.Length == 0)
+            return;
+
+        System.Threading.ParameterizedThreadStart threadFunction = obj =>
+        {
+            byte[] png = new byte[bytes.Length];
+            bytes.CopyTo(png);
+
+            png = ImageConversion.EncodeArrayToPNG(png, format, width, height);
+            System.IO.File.WriteAllBytes(filePath, png);
+        };
+
+        HandleThreadPool(threadFunction);
+    }
+
     public static void SaveArrayAsPNGToDisk(byte[] bytes, GraphicsFormat format, uint width, uint height, string filePath)
     {
         byte[] png = ImageConversion.EncodeArrayToPNG(bytes, format, width, height);
@@ -144,7 +176,6 @@ public class ImageUtils
 
         System.Threading.ParameterizedThreadStart threadFunction = obj =>
         {
-            Debug.Log("Saving frame to: " + path);
             System.IO.File.WriteAllBytes(path, png);
         };
         
@@ -156,11 +187,10 @@ public class ImageUtils
         if (png == null)
             return;
 
-        Debug.Log("Saving frame to: " + path);
         System.IO.File.WriteAllBytes(path, png);
     }
 
-    public static void SendArrayAsPNGToSocket(byte[] bytes, GraphicsFormat format, uint width, uint height, Server server, string fileName, string service)
+    public static void SendArrayAsPNGToSocket(byte[] bytes, GraphicsFormat format, uint width, uint height, WebSocketSessionManager server, string fileName)
     {
         OnFinishBytes onFinishBytes = (png) => 
         {
@@ -170,13 +200,13 @@ public class ImageUtils
                 fileBytes = png
             };
             byte[] data = form.ToBytes();
-            server.SendPNGAsync(data, service);
+            server.BroadcastAsync(data,() => {});
         };
 
         Array2PNG(bytes, format, width, height, onFinishBytes);
     }
 
-    public static void SendArrayAsPNGToSocketAsync(byte[] bytes, GraphicsFormat format, uint width, uint height, Server server, string fileName, string service)
+    public static void SendArrayAsPNGToSocketAsync(byte[] bytes, GraphicsFormat format, uint width, uint height, WebSocketSessionManager server, string fileName)
     {
         if (bytes == null)
             return;
@@ -192,7 +222,34 @@ public class ImageUtils
             };
 
             byte[] data = form.ToBytes();
-            server.SendPNG(data, service);
+            server.Broadcast(data);
+        };
+        
+        HandleThreadPool(threadFunction);
+    }
+
+    public static void SendNativeByteArrayAsPNGToSocketAsync(NativeArray<byte> bytes, GraphicsFormat format, uint width, uint height, WebSocketSessionManager server, string fileName)
+    {
+        if (bytes.Length == 0)
+            return;
+
+        System.Threading.ParameterizedThreadStart threadFunction = obj =>
+        {
+            // bottleneck
+            byte[] png = new byte[bytes.Length];
+            //
+
+            bytes.CopyTo(png);
+            png = ImageConversion.EncodeArrayToPNG(png, format, width, height);
+
+            SocketSendForm form = new SocketSendForm()
+            {
+                name = fileName,
+                fileBytes = png
+            };
+
+            byte[] data = form.ToBytes();
+            server.Broadcast(data);
         };
         
         HandleThreadPool(threadFunction);
@@ -210,7 +267,6 @@ public class ImageUtils
             
             string filePath = CreateFolderAndReturnPath(form.name, path);
             System.IO.File.WriteAllBytes(filePath, form.fileBytes);
-            Debug.Log("Saving frame to: " + filePath);
         };
         
         HandleThreadPool(threadFunction);
@@ -226,7 +282,6 @@ public class ImageUtils
 
         string filePath = CreateFolderAndReturnPath(form.name, path);
         System.IO.File.WriteAllBytes(filePath, form.fileBytes);
-        Debug.Log("Saving frame to: " + path);
     }
 
     private static string CreateFolderAndReturnPath(string fileName, string path)
@@ -242,18 +297,22 @@ public class ImageUtils
 
     private static void HandleThreadPool(System.Threading.ParameterizedThreadStart threadFunction)
     {
+        Thread thread;
+
         for (int i = 0; i < _threadPool.Count; i++)
         {
             if (!_threadPool[i].IsAlive)
             {
-                _threadPool[i].Abort();
-                _threadPool[i] = new Thread(threadFunction);
-                _threadPool[i].Start();
+                thread = _threadPool[i];
+                thread.Abort();
+                thread = new Thread(threadFunction);
+                thread.Start();
+                _threadPool[i] = thread;
                 return;
             }
         }
 
-        Thread thread = new Thread(threadFunction);
+        thread = new Thread(threadFunction);
         _threadPool.Add(thread);
         thread.Start();
     }
