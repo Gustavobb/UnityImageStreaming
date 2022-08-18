@@ -921,7 +921,7 @@ MonoBehaviour:
   _onGotCameraFrame:
     m_PersistentCalls:
       m_Calls: []
-  _cameraResolution: {x: 480, y: 360}
+  _cameraResolution: {x: 320, y: 240}
   _hasToGetFrameFromClient: 1
   _service: Image
   _client: {fileID: 1953010353}
